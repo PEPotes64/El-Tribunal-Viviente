@@ -1,15 +1,3 @@
-// 🔍 CONSULTAR MODELOS DISPONIBLES EN GROQ
-async function verModelosGroq() {
-    try {
-        const lista = await groq.models.list();
-        console.log("📋 MODELOS DISPONIBLES EN TU CUENTA DE GROQ:");
-        lista.data.forEach(m => console.log(` - ID: "${m.id}"`));
-    } catch (e) {
-        console.error("❌ Error al consultar modelos de Groq:", e);
-    }
-}
-verModelosGroq();
-
 // ==========================================
 // 1. TRAMPA DE PUERTO PARA RENDER 🚀
 // ==========================================
@@ -27,39 +15,54 @@ http.createServer((req, res) => {
 // 2. IMPORTACIONES Y CONFIGURACIÓN DISCORD/GROQ
 // ==========================================
 require('dotenv').config();
-const { Client, GatewayIntentBits, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits } = require('discord.js');
 const Groq = require('groq-sdk');
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.DirectMessages
+        GatewayIntentBits.MessageContent // 👈 Permiso para leer chat
     ]
 });
 
+// Inicialización de Groq
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // ==========================================
-// 3. EVENTO DE INICIO (READY)
+// 3. IMPRIMIR MODELOS DISPONIBLES EN GROQ 🔍
+// ==========================================
+async function verModelosGroq() {
+    try {
+        const lista = await groq.models.list();
+        console.log("📋 MODELOS DISPONIBLES EN TU CUENTA DE GROQ:");
+        lista.data.forEach(m => console.log(` - ID: "${m.id}"`));
+    } catch (e) {
+        console.error("❌ Error al consultar modelos de Groq:", e);
+    }
+}
+
+// Se ejecuta DESPUÉS de inicializar 'groq'
+verModelosGroq();
+
+// ==========================================
+// 4. EVENTO DE INICIO (READY)
 // ==========================================
 client.once('clientReady', (c) => {
     console.log(`⚖️ EL TRIBUNAL VIVIENTE conectado y listo como ${c.user.tag}`);
 });
 
 // ==========================================
-// 4. LÓGICA DE MONITOREO Y MODERACIÓN CON IA
+// 5. LÓGICA DE MONITOREO Y MODERACIÓN CON IA
 // ==========================================
 client.on('messageCreate', async (message) => {
-    // Ignorar mensajes de bots (incluyendo a sí mismo) o mensajes fuera de servidores
+    // Ignorar bots o mensajes privados
     if (message.author.bot || !message.guild) return;
 
-    // Print en vivo para ver en Render que se está leyendo el chat
+    // Log de lectura en tiempo real
     console.log(`📩 [${message.guild.name}] ${message.author.tag}: "${message.content}"`);
 
     try {
-        // Enviar el mensaje a la IA Groq para evaluar toxicidad
         const completion = await groq.chat.completions.create({
             messages: [
                 {
@@ -78,6 +81,7 @@ Debes responder ÚNICAMENTE en formato JSON estricto con esta estructura exacta:
                     content: message.content
                 }
             ],
+            // Si te vuelve a dar error de modelo, cambiá este valor por uno de los que imprima 'verModelosGroq' en la consola
             model: "llama-3.1-8b-instant",
             response_format: { type: "json_object" }
         });
@@ -88,30 +92,30 @@ Debes responder ÚNICAMENTE en formato JSON estricto con esta estructura exacta:
         if (respuestaIA.toxic) {
             console.log(`🚨 INFRACCIÓN DETECTADA por ${message.author.tag}. Acción: ${respuestaIA.accion}`);
 
-            // 1. Borrar mensaje si corresponde
-            if (respuestaIA.accion === 'BORRAR' || respuestaIA.accion === 'TIMEOUT' || respuestaIA.accion === 'BAN') {
+            // 1. Borrar mensaje si aplica
+            if (['BORRAR', 'TIMEOUT', 'BAN'].includes(respuestaIA.accion)) {
                 if (message.deletable) {
                     await message.delete();
                     console.log(`🗑️ Mensaje de ${message.author.tag} eliminado.`);
                 }
             }
 
-            // 2. Aplicar sanciones más fuertes
+            // 2. Aplicar sanción a miembro
             const member = await message.guild.members.fetch(message.author.id);
 
             if (respuestaIA.accion === 'TIMEOUT') {
                 if (member.moderatable) {
-                    await member.timeout(10 * 60 * 1000, respuestaIA.razon); // 10 minutos de Mute
+                    await member.timeout(10 * 60 * 1000, respuestaIA.razon); // 10 mins
                     console.log(`🔇 ${message.author.tag} silenciado por 10 minutos.`);
                 } else {
-                    console.log(`⚠️ No se pudo silenciar a ${message.author.tag} por jerarquía d roles / permisos.`);
+                    console.log(`⚠️ No se pudo silenciar a ${message.author.tag} por jerarquía de roles / permisos.`);
                 }
             } else if (respuestaIA.accion === 'BAN') {
                 if (member.bannable) {
                     await member.ban({ reason: respuestaIA.razon });
                     console.log(`🔨 ${message.author.tag} fue baneado del servidor.`);
                 } else {
-                    console.log(`⚠️ No se pudo banear a ${message.author.tag} por jerarquía d roles / permisos.`);
+                    console.log(`⚠️ No se pudo banear a ${message.author.tag} por jerarquía de roles / permisos.`);
                 }
             }
         }
@@ -122,6 +126,6 @@ Debes responder ÚNICAMENTE en formato JSON estricto con esta estructura exacta:
 });
 
 // ==========================================
-// 5. LOGIN
+// 6. LOGIN EN DISCORD
 // ==========================================
 client.login(process.env.DISCORD_TOKEN);

@@ -28,71 +28,91 @@ const client = new Client({
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// Modelo inicial preferido
-let MODELO_ACTUAL = "openai/gpt-oss-20b";
+// Modelo para texto puro
+let MODELO_TEXTO = "openai/gpt-oss-20b";
+// Modelo para vision de imagenes (+18 / NSFW / Gore)
+let MODELO_VISION = "llama-3.2-11b-vision-instruct";
 
 // ==========================================
-// 3. FUNCIÓN DE EVALUACIÓN CON SELECCIÓN AUTOMÁTICA 🤖
+// 3. FUNCIÓN DE EVALUACIÓN MULTIMODAL (TEXTO + FOTOS) 👁️
 // ==========================================
-async function evaluarConIA(texto) {
+async function evaluarConIA(message) {
+    const texto = message.content ? message.content.trim() : "";
+    const imagenUrl = message.attachments.first()?.url;
+
+    // Si no hay ni texto ni foto, ignorar d una
+    if (!texto && !imagenUrl) {
+        return null;
+    }
+
+    const promptSistema = `Eres "El Tribunal Viviente", un moderador algorítmico implacable e imparcial para Discord.
+Analiza el mensaje y/o la imagen adjunta. Detecta si hay:
+- Insultos graves, acoso, spam extremo, amenazas o doxxing.
+- Contenido pornográfico, +18, NSFW, desnudez, sangriento o gore en la imagen.
+
+Debes responder ÚNICAMENTE en formato JSON estricto con esta estructura exacta:
+{
+    "toxic": true o false,
+    "accion": "NINGUNA", "BORRAR", "TIMEOUT", o "BAN",
+    "razon": "Explicación corta de la sanción"
+}`;
+
+    // Construir contenido del usuario
+    let contenidoUsuario = [];
+    
+    if (texto) {
+        contenidoUsuario.push({ type: "text", text: `Texto del mensaje: "${texto}"` });
+    }
+
+    if (imagenUrl) {
+        contenidoUsuario.push({ type: "image_url", image_url: { url: imagenUrl } });
+        contenidoUsuario.push({ type: "text", text: "Analiza la imagen adjunta en busca de desnudez, pornografía, contenido +18 o violencia explícita." });
+    }
+
+    // Seleccionar modelo segun si hay imagen o no
+    let modeloUsar = imagenUrl ? MODELO_VISION : MODELO_TEXTO;
+
     try {
         return await groq.chat.completions.create({
             messages: [
-                {
-                    role: "system",
-                    content: `Eres "El Tribunal Viviente", un moderador algorítmico implacable e imparcial para un servidor de Discord.
-Analiza el mensaje del usuario y determina si viola las normas (insultos graves, acoso, spam extremo, contenido prohibido o toxicidad desmedida).
-Debes responder ÚNICAMENTE en formato JSON estricto con esta estructura exacta:
-{
-    "toxic": true o false,
-    "accion": "NINGUNA", "BORRAR", "TIMEOUT", o "BAN",
-    "razon": "Explicación corta de la sanción"
-}`
-                },
-                { role: "user", content: texto }
+                { role: "system", content: promptSistema },
+                { role: "user", content: contenidoUsuario }
             ],
-            model: MODELO_ACTUAL,
+            model: modeloUsar,
             response_format: { type: "json_object" }
         });
     } catch (err) {
-        // 🔄 Si el modelo falla por 404 o nombre invalido, AUTO-ELEGIR uno valido
+        // 🔄 AUTO-FALLBACK SI FALLA EL MODELO
         if (err.status === 404 || err.code === 'model_not_found' || (err.message && err.message.includes('does not exist'))) {
-            console.log(`⚠️ El modelo "${MODELO_ACTUAL}" no esta disponible. Buscando modelo automatico en tu cuenta de Groq...`);
+            console.log(`⚠️ Modelo "${modeloUsar}" no disponible. Buscando reemplazo en Groq...`);
             
             const lista = await groq.models.list();
-            // Filtrar un modelo d texto compatible d la lista
-            const modeloNuevo = lista.data.find(m => 
-                m.id.includes('gpt-oss') || 
-                m.id.includes('qwen') || 
-                m.id.includes('llama') || 
-                m.id.includes('mixtral')
-            ) || lista.data[0];
+            
+            // Si habia imagen buscar uno con 'vision', si no uno normal
+            let modeloNuevo;
+            if (imagenUrl) {
+                modeloNuevo = lista.data.find(m => m.id.includes('vision')) || lista.data[0];
+            } else {
+                modeloNuevo = lista.data.find(m => m.id.includes('gpt-oss') || m.id.includes('qwen') || m.id.includes('llama')) || lista.data[0];
+            }
 
             if (modeloNuevo) {
-                MODELO_ACTUAL = modeloNuevo.id;
-                console.log(`✅ ¡Modelo auto-cambiado a "${MODELO_ACTUAL}"! Reintentando evaluacion en caliente...`);
+                if (imagenUrl) MODELO_VISION = modeloNuevo.id;
+                else MODELO_TEXTO = modeloNuevo.id;
                 
-                // Reintentar con el nuevo modelo encontrado
+                console.log(`✅ ¡Auto-cambiado a "${modeloNuevo.id}"! Reintentando...`);
+                
                 return await groq.chat.completions.create({
                     messages: [
-                        {
-                            role: "system",
-                            content: `Eres "El Tribunal Viviente", un moderador algorítmico implacable.
-Debes responder ÚNICAMENTE en formato JSON estricto con esta estructura exacta:
-{
-    "toxic": true o false,
-    "accion": "NINGUNA", "BORRAR", "TIMEOUT", o "BAN",
-    "razon": "Explicación corta de la sanción"
-}`
-                        },
-                        { role: "user", content: texto }
+                        { role: "system", content: promptSistema },
+                        { role: "user", content: contenidoUsuario }
                     ],
-                    model: MODELO_ACTUAL,
+                    model: modeloNuevo.id,
                     response_format: { type: "json_object" }
                 });
             }
         }
-        throw err; // Si es otro error, lanzarlo
+        throw err;
     }
 }
 
@@ -101,7 +121,7 @@ Debes responder ÚNICAMENTE en formato JSON estricto con esta estructura exacta:
 // ==========================================
 client.once('clientReady', (c) => {
     console.log(`⚖️ EL TRIBUNAL VIVIENTE conectado y listo como ${c.user.tag}`);
-    console.log(`🤖 Modelo inicial asignado: "${MODELO_ACTUAL}"`);
+    console.log(`🤖 Modelo Texto: "${MODELO_TEXTO}" | Modelo Visión: "${MODELO_VISION}"`);
 });
 
 // ==========================================
@@ -110,13 +130,15 @@ client.once('clientReady', (c) => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
-    console.log(`📩 [${message.guild.name}] ${message.author.tag}: "${message.content}"`);
+    const tieneFoto = message.attachments.size > 0 ? " [Con imagen 🖼️]" : "";
+    console.log(`📩 [${message.guild.name}] ${message.author.tag}: "${message.content}"${tieneFoto}`);
 
     try {
-        const completion = await evaluarConIA(message.content);
+        const completion = await evaluarConIA(message);
+        if (!completion) return;
+
         const respuestaIA = JSON.parse(completion.choices[0]?.message?.content || '{}');
-        
-        console.log(`🤖 Evaluación Groq (${MODELO_ACTUAL}):`, respuestaIA);
+        console.log(`🤖 Evaluación Groq:`, respuestaIA);
 
         if (respuestaIA.toxic) {
             console.log(`🚨 INFRACCIÓN DETECTADA por ${message.author.tag}. Acción: ${respuestaIA.accion}`);
@@ -125,7 +147,7 @@ client.on('messageCreate', async (message) => {
             if (['BORRAR', 'TIMEOUT', 'BAN'].includes(respuestaIA.accion)) {
                 if (message.deletable) {
                     await message.delete();
-                    console.log(`🗑️ Mensaje de ${message.author.tag} eliminado.`);
+                    console.log(`🗑️ Mensaje/Foto de ${message.author.tag} eliminado.`);
                 }
             }
 

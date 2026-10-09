@@ -8,7 +8,7 @@ async function verModelosGroq() {
         console.error("❌ Error al consultar modelos de Groq:", e);
     }
 }
-verModelosGroq();,
+verModelosGroq();
 
 // ==========================================
 // 1. TRAMPA DE PUERTO PARA RENDER 🚀

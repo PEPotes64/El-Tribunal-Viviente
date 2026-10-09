@@ -1,3 +1,13 @@
+const http = require('http');
+const PORT = process.env.PORT || 3000;
+
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('El Tribunal Viviente esta patrullando en silencio Pepo :v');
+}).listen(PORT, () => {
+    console.log(`🔥 Trampa de puerto escuchando en el puerto ${PORT}`);
+});
+
 const { Client, GatewayIntentBits, PermissionFlagsBits } = require('discord.js');
 const Groq = require('groq-sdk');
 require('dotenv').config();

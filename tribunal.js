@@ -1,3 +1,15 @@
+// 🔍 CONSULTAR MODELOS DISPONIBLES EN GROQ
+async function verModelosGroq() {
+    try {
+        const lista = await groq.models.list();
+        console.log("📋 MODELOS DISPONIBLES EN TU CUENTA DE GROQ:");
+        lista.data.forEach(m => console.log(` - ID: "${m.id}"`));
+    } catch (e) {
+        console.error("❌ Error al consultar modelos de Groq:", e);
+    }
+}
+verModelosGroq();,
+
 // ==========================================
 // 1. TRAMPA DE PUERTO PARA RENDER 🚀
 // ==========================================
